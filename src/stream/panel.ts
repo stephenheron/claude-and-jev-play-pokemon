@@ -23,6 +23,8 @@ export class PanelRenderer {
       if (code < 0x80 || ch.length !== 1 || this.glyph.has(ch)) continue;
       this.glyph.set(ch, Array.from(rom.subarray(base + (code - 0x80) * 8, base + (code - 0x80) * 8 + 8)));
     }
+    // ¥ shares code $F0 with an earlier multi-character charmap name, so the loop above skips it
+    this.glyph.set('¥', Array.from(rom.subarray(base + (0xf0 - 0x80) * 8, base + (0xf0 - 0x80) * 8 + 8)));
     for (const [ch, bits] of Object.entries(EXTRA)) this.glyph.set(ch, bits);
     this.glyph.set('→', this.glyph.get('▶') ?? EXTRA['>']);
   }

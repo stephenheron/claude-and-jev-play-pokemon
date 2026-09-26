@@ -1,5 +1,5 @@
 // Worker thread: owns ffmpeg and feeds it two small raw inputs at a steady rate —
-// the 160x144 game screen (stdin) and the 288x288 Jev panel (fd 3). ffmpeg upscales
+// the 160x144 game screen (stdin) and the 288x288 side panel (fd 3). ffmpeg upscales
 // (nearest-neighbor) and lays them out at 1280x720. Independent of the main thread.
 import { workerData, parentPort } from 'node:worker_threads';
 import { spawn } from 'node:child_process';
@@ -73,7 +73,7 @@ function start() {
         out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(audio[j] * 0.8 * 32767))), i * 4);
         out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(audio[j + 1] * 0.8 * 32767))), i * 4 + 2);
       }
-      rpos += avail; // missing samples (game paused on a Jev call) stay silent
+      rpos += avail; // missing samples (game paused or busy) stay silent
       sentSamples += dueS;
       if (audioIn.writableLength < RATE * 4) audioIn.write(out);
     }

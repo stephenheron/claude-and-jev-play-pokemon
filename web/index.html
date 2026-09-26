@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Jev Plays Pokémon</title>
+<title>Pokémon Red Viewer</title>
 <style>
   :root {
     --bg: #f4f4ef; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e2e2dc;
@@ -25,7 +25,6 @@
   button { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; font: inherit; }
   button:hover { border-color: var(--accent); }
   .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 4px; }
-  .goal { font-size: 15px; }
   .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
   .stat b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
   .stat span { font-size: 11px; color: var(--muted); }
@@ -34,27 +33,20 @@
   .hp { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
   .hp i { display: block; height: 100%; background: var(--accent); }
   .side { display: grid; gap: 16px; align-content: start; min-width: 0; }
-  #feed { max-height: 62vh; overflow-y: auto; display: grid; gap: 8px; }
-  .dec { border-top: 1px solid var(--line); padding-top: 8px; }
-  .dec:first-child { border-top: 0; padding-top: 0; }
-  .dec .head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
-  .dec .pick { font-weight: 600; margin: 2px 0 4px; overflow-wrap: anywhere; }
-  .opt { display: grid; grid-template-columns: 1fr 44px; gap: 6px; font-size: 12px; align-items: center; }
-  .opt .bar { position: relative; height: 16px; border-radius: 3px; overflow: hidden; }
-  .opt .bar i { position: absolute; inset: 0 auto 0 0; background: var(--bar); }
-  .opt .bar span { position: relative; padding-left: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; line-height: 16px; }
-  .opt.on .bar span { font-weight: 600; }
   .num { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
   .ev { font-size: 12px; color: var(--muted); }
-  .ev.milestone { color: var(--accent); font-weight: 600; }
+  .ev.bot { color: var(--ink); }
+  .ev.jev { color: var(--accent); }
+  .ev.save { color: var(--accent); font-weight: 600; }
   .ev.error { color: var(--warn); }
 </style>
 </head>
 <body>
 <header>
-  <h1>Jev Plays Pokémon Red</h1>
-  <span class="pill" id="backend">connecting…</span>
-  <span class="pill" id="throttle"></span>
+  <h1>Pokémon Red</h1>
+  <span class="pill" id="conn">connecting…</span>
+  <span class="pill" id="bot" hidden></span>
+  <span class="pill" id="jev" hidden></span>
 </header>
 <main>
   <section>
@@ -65,16 +57,14 @@
         <button id="save">Save state</button>
       </div>
       <div class="stats">
-        <div class="stat"><b id="calls">0</b><span>Jev calls</span></div>
-        <div class="stat"><b id="cache">0</b><span>cache hits</span></div>
-        <div class="stat"><b id="tokens">0</b><span>input tokens</span></div>
         <div class="stat"><b id="badges">0</b><span>badges</span></div>
+        <div class="stat"><b id="money">0</b><span>money</span></div>
+        <div class="stat"><b id="frames">0</b><span>frames</span></div>
+        <div class="stat"><b id="state">—</b><span>state</span></div>
       </div>
     </div>
     <div class="card" style="margin-top:16px">
-      <div class="label">Objective <span id="mprog"></span></div>
-      <div class="goal" id="goal">—</div>
-      <div class="label" style="margin-top:10px">Location</div>
+      <div class="label">Location</div>
       <div id="loc">—</div>
       <div class="label" style="margin-top:10px">Party</div>
       <div class="party" id="party"></div>
@@ -82,12 +72,8 @@
   </section>
   <section class="side">
     <div class="card">
-      <div class="label">Jev decisions (latest first)</div>
-      <div id="feed"></div>
-    </div>
-    <div class="card">
       <div class="label">Events</div>
-      <div id="events" style="max-height: 24vh; overflow-y: auto"></div>
+      <div id="events" style="max-height: 70vh; overflow-y: auto"></div>
     </div>
   </section>
 </main>
@@ -109,38 +95,32 @@ function connect() {
     }
     const msg = JSON.parse(m.data);
     if (msg.type === 'status') status(msg);
-    else if (msg.type === 'jev') decision(msg);
     else if (msg.type === 'event') event(msg.e);
     else if (msg.type === 'history') msg.events.forEach(event);
   };
-  ws.onclose = () => setTimeout(connect, 1000);
+  ws.onopen = () => { $('conn').textContent = 'connected'; };
+  ws.onclose = () => { $('conn').textContent = 'disconnected'; setTimeout(connect, 1000); };
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function status(s) {
-  $('backend').textContent = `Jev backend: ${s.jev.backend}`;
-  $('throttle').textContent = `throttle ≥${s.jev.minIntervalMs}ms · ≤${s.jev.maxPerMinute}/min`;
-  $('calls').textContent = s.jev.calls; $('cache').textContent = s.jev.cacheHits;
-  $('tokens').textContent = s.jev.inputTokens.toLocaleString(); $('badges').textContent = s.badges;
-  $('goal').textContent = s.milestone.goal ?? 'Game complete!';
-  $('mprog').textContent = `(${s.milestone.index}/${s.milestone.total})`;
-  $('loc').textContent = `${s.map} (${s.x}, ${s.y}) · ¥${s.money}`;
-  $('party').innerHTML = s.party.map((p) => `<div class="mon"><div>${esc(p.name)} <span class="num">Lv${p.level}</span></div>
+  $('badges').textContent = s.badges; $('money').textContent = `¥${s.money.toLocaleString()}`;
+  $('frames').textContent = s.frames.toLocaleString(); $('state').textContent = s.paused ? 'paused' : 'running';
+  $('loc').textContent = `${s.map} (${s.x}, ${s.y})`;
+  if (s.bot) {
+    $('bot').hidden = false;
+    $('bot').textContent = `bot: ${s.bot.status}${s.bot.run ? ` · run ${s.bot.run}` : ''}`;
+    $('bot').style.color = s.bot.status === 'error' ? 'var(--warn)' : s.bot.status === 'running' ? 'var(--accent)' : '';
+    $('bot').title = s.bot.error ?? '';
+  }
+  if (s.jev) {
+    $('jev').hidden = false;
+    $('jev').textContent = s.jev.available ? `jev: ${s.jev.calls} calls · $${s.jev.costUsd.toFixed(4)}` : 'jev: off';
+    $('jev').title = s.jev.model;
+  }
+  $('party').innerHTML = s.party.map((p) => `<div class="mon"><div>${esc(p.name)} <span class="num">${esc(p.species)} Lv${p.level}</span></div>
     <div class="hp"><i style="width:${Math.round(100 * p.hp / Math.max(1, p.maxHp))}%"></i></div><div class="num">${p.hp}/${p.maxHp}</div></div>`).join('') || '<span class="ev">none yet</span>';
 }
-function decision({ r, stats }) {
-  $('calls').textContent = stats.calls; $('cache').textContent = stats.cacheHits; $('tokens').textContent = stats.inputTokens.toLocaleString();
-  const a = Object.values(r.answers)[0];
-  const picked = Object.values(r.picked)[0];
-  const probs = a && a.probabilities ? Object.entries(a.probabilities).sort((x, y) => y[1] - x[1]).slice(0, 5) : [];
-  const el = document.createElement('div');
-  el.className = 'dec';
-  el.innerHTML = `<div class="head"><span>#${r.n} · ${esc(r.purpose)}</span><span>${r.cached ? 'cached' : r.latencyMs + 'ms'}</span></div>
-    <div class="pick">${esc(picked)}</div>` + probs.map(([k, p]) => `<div class="opt ${k === picked ? 'on' : ''}"><div class="bar"><i style="width:${(p * 100).toFixed(1)}%"></i><span>${esc(k)}</span></div><div class="num">${(p * 100).toFixed(0)}%</div></div>`).join('');
-  $('feed').prepend(el);
-  while ($('feed').children.length > 60) $('feed').lastChild.remove();
-}
 function event(e) {
-  if (e.kind === 'decision') return;
   const el = document.createElement('div');
   el.className = `ev ${e.kind}`;
   el.textContent = `[${e.kind}] ${e.msg}`;

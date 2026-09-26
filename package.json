@@ -1,20 +1,18 @@
 {
-  "name": "jevpokemon",
+  "name": "pokered-harness",
   "version": "1.0.0",
-  "description": "Jev (TypeSafe AI decision model) plays Pokémon Red. Bring your own ROM.",
+  "description": "Pokémon Red in a Node Game Boy emulator: raw button hooks, live game state from memory, a browser viewer and streaming. Bring your own ROM.",
   "scripts": {
-    "gen": "tsx scripts/gen-data.ts",
+    "start": "node --no-node-snapshot --import tsx src/host.ts",
     "setup": "bash scripts/setup.sh",
-    "start": "tsx src/server/main.ts",
-    "headless": "tsx src/server/main.ts --headless",
-    "resume": "tsx src/server/main.ts --resume",
+    "gen": "tsx scripts/gen-data.ts",
     "typecheck": "tsc"
   },
   "keywords": [],
   "author": "Christian Mathiesen",
   "license": "GPL-2.0-or-later",
   "dependencies": {
-    "ai": "^7.0.113",
+    "isolated-vm": "^7.0.1",
     "serverboy": "^0.0.7",
     "ws": "^8.21.3"
   },
@@ -25,5 +23,9 @@
     "typescript": "^7.0.2"
   },
   "type": "module",
-  "private": true
+  "private": true,
+  "main": "src/index.ts",
+  "engines": {
+    "node": ">=24"
+  }
 }

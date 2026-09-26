@@ -1,5 +1,5 @@
 // Debug: load a save, run a button script, dump the screen after each step.
-// usage: tsx scripts/dbg/screens.ts <save> "START,w20,A,..."  (wN = wait N frames, hBTN:N = hold)
+// usage: tsx scripts/tools/screens.ts <save> "START,w20,A,..."  (wN = wait N frames, hBTN:N = hold)
 import fs from 'node:fs';
 import { Emulator } from '../../src/emu/emulator.js';
 import { Rom } from '../../src/game/rom.js';

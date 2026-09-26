@@ -1,0 +1,9 @@
+import fs from 'node:fs';
+
+// Minimal .env loader (keeps Node 20 compatibility). Existing env vars win. Import it first: `import './env.js'`.
+if (fs.existsSync('.env')) {
+  for (const line of fs.readFileSync('.env', 'utf8').split('\n')) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (m && m[2] !== '' && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+  }
+}
