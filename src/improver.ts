@@ -25,19 +25,55 @@ export interface SessionInfo {
   /** Claude's closing 2-4 sentences. */
   summary?: string;
   filesChanged?: string[]; costUsd?: number; durationMs?: number;
+  /** A long root-cause session, run after several sessions without game progress. */
+  deep?: boolean;
 }
 
 const sessionInfo = (r: Record<string, any>): SessionInfo => ({
   id: r.id, ended: r.ended, applied: !!r.applied, note: String(r.note ?? ''),
   summary: typeof r.claudeSummary === 'string' ? r.claudeSummary.slice(0, 2000) : undefined,
-  filesChanged: r.filesChanged, costUsd: r.costUsd, durationMs: r.durationMs,
+  filesChanged: r.filesChanged, costUsd: r.costUsd, durationMs: r.durationMs, deep: r.deep ? true : undefined,
 });
+
+/**
+ * What counts as game progress between sessions: badges, story events, Pokémon owned, and maps ever visited.
+ * Levels and money are left out on purpose: grinding wild Pokémon in a loop is not progress.
+ */
+export const progressSignature = (p: ReturnType<typeof progress>, mapsEverVisited: number) =>
+  `badges=${p.badges} events=${p.storyEvents} owned=${p.pokedexOwned} maps=${mapsEverVisited}`;
+
+/** Every map any live run has visited (from the run summaries), plus where the game is now. */
+function mapsEverVisited(runsDir: string, currentMap: string): Set<string> {
+  const maps = new Set<string>([currentMap]);
+  if (!fs.existsSync(runsDir)) return maps;
+  for (const f of fs.readdirSync(runsDir)) {
+    try {
+      const s = JSON.parse(fs.readFileSync(path.join(runsDir, f, 'summary.json'), 'utf8'));
+      for (const m of s.mapsVisited ?? []) maps.add(String(m));
+    } catch { /* no summary yet, or unreadable */ }
+  }
+  return maps;
+}
+
+/** How many sessions in a row (newest first, stopping at the last deep session) started with this same progress. */
+export function stagnantSessions(sessionsDir: string, signature: string): number {
+  let n = 0;
+  for (const s of recent(sessionsDir, 100).reverse()) {
+    if (s.deep) break;                          // a deep session resets the count, whatever it achieved
+    if (s.signature !== signature) break;       // progress was made (or an older session without a signature)
+    n++;
+  }
+  return n;
+}
 
 const env = (n: string, d: number) => { const v = Number(process.env[n]); return Number.isFinite(v) && v > 0 ? v : d; };
 
 export function startImprover(game: Game, botsDir: string, status: ImproverStatus) {
   const intervalMs = env('IMPROVER_INTERVAL_MIN', 5) * 60_000;
   const timeoutMs = env('IMPROVER_TIMEOUT_MIN', 10) * 60_000;
+  // After this many sessions without game progress, the next session is a deep one: a longer, root-cause session.
+  const stallSessions = env('IMPROVER_STALL_SESSIONS', 4);
+  const deepTimeoutMs = env('IMPROVER_DEEP_TIMEOUT_MIN', 30) * 60_000;
   const root = path.resolve('.');
   const sessionsDir = path.join(root, 'logs', 'sessions');
   const runsDir = path.join(root, 'logs', 'runs');
@@ -79,9 +115,17 @@ export function startImprover(game: Game, botsDir: string, status: ImproverStatu
     const container = `pokered-improver-${id}`;
     running = { id, container };
     Object.assign(status, { status: 'running', session: id });
-    game.log('improver', `session ${id} started`);
     const t0 = Date.now();
     const result: Record<string, unknown> = { id, started: new Date(t0).toISOString() };
+    // Stagnation check: the same progress signature at the start of the last N sessions means the usual short
+    // sessions aren't working, so this one gets more time and is told to look for the root cause.
+    const now = progress(game);
+    const signature = progressSignature(now, mapsEverVisited(runsDir, now.map).size);
+    const stagnant = stagnantSessions(sessionsDir, signature);
+    const deep = stagnant >= stallSessions;
+    const limitMs = deep ? deepTimeoutMs : timeoutMs;
+    Object.assign(result, { signature, stagnantSessions: stagnant, deep });
+    game.log('improver', `session ${id} started${deep ? ` (deep: no progress for ${stagnant} sessions, ${Math.round(limitMs / 60_000)} minutes)` : ''}`);
     try {
       await ensureImage();
       fs.mkdirSync(path.join(dir, 'workspace'), { recursive: true });
@@ -90,7 +134,7 @@ export function startImprover(game: Game, botsDir: string, status: ImproverStatu
       copyDir(botsDir, path.join(dir, 'before'));
       copyDir(botsDir, path.join(dir, 'workspace', 'bots'));
       game.emu.saveState(path.join(dir, 'live.state.json'));
-      const prompt = buildPrompt(game, runsDir, sessionsDir, id, timeoutMs);
+      const prompt = buildPrompt(game, runsDir, sessionsDir, id, limitMs, deep ? { stagnant, normalMs: timeoutMs, intervalMs } : undefined);
       fs.writeFileSync(path.join(dir, 'prompt.md'), prompt);
 
       const mounts = [
@@ -126,14 +170,14 @@ export function startImprover(game: Game, botsDir: string, status: ImproverStatu
             for (const a of activity(line)) game.log('claude', a);
           }
         });
-        const timer = setTimeout(() => { timedOut = true; spawnSync('docker', ['kill', container], { stdio: 'ignore' }); }, timeoutMs);
+        const timer = setTimeout(() => { timedOut = true; spawnSync('docker', ['kill', container], { stdio: 'ignore' }); }, limitMs);
         p.on('close', (c) => { clearTimeout(timer); resolve(c); });
       });
       transcript.end(); stderr.end();
 
       const final = lastResult(path.join(dir, 'transcript.jsonl'));
       Object.assign(result, { exitCode: code, timedOut, costUsd: final?.total_cost_usd, turns: final?.num_turns, claudeSummary: final?.result });
-      if (timedOut) throw new Error(`timed out after ${timeoutMs / 60_000} minutes: changes discarded`);
+      if (timedOut) throw new Error(`timed out after ${limitMs / 60_000} minutes: changes discarded`);
       if (code !== 0 || !final || final.is_error) throw new Error(`Claude Code failed (exit ${code}${final?.subtype ? `, ${final.subtype}` : ''}): see stderr.log / transcript.jsonl`);
 
       // hand the new bot back, unless someone changed bots/ by hand while the session ran
@@ -165,7 +209,7 @@ export function startImprover(game: Game, botsDir: string, status: ImproverStatu
       running = null;
       Object.assign(status, { status: 'idle', session: undefined, last: { id, applied: !!result.applied, note: String(result.note) }, nextAt: nextAt() });
       status.history = [sessionInfo(result), ...(status.history ?? [])].slice(0, 10);
-      game.log('improver', `session ${id}: ${result.note}${result.costUsd !== undefined ? ` ($${Number(result.costUsd).toFixed(2)})` : ''}`);
+      game.log('improver', `${deep ? 'deep ' : ''}session ${id}: ${result.note}${result.costUsd !== undefined ? ` ($${Number(result.costUsd).toFixed(2)})` : ''}`);
       if (typeof result.claudeSummary === 'string') game.log('improver', `Claude: ${result.claudeSummary.replace(/\s+/g, ' ').slice(0, 600)}`);
     }
   }
@@ -294,12 +338,23 @@ function recent(dir: string, n: number) {
     .filter(Boolean);
 }
 
-function buildPrompt(game: Game, runsDir: string, sessionsDir: string, id: string, timeoutMs: number) {
+function buildPrompt(game: Game, runsDir: string, sessionsDir: string, id: string, timeoutMs: number, deep?: { stagnant: number; normalMs: number; intervalMs: number }) {
   const runs = recent(runsDir, 8).map((r) => ({
     id: r.id, reason: r.reason, error: r.error?.split('\n')[0], durationMs: r.durationMs, actions: r.actions, jevCalls: r.jev?.calls,
     start: r.progress?.start, end: r.progress?.end,
   }));
-  const sessions = recent(sessionsDir, 4).filter((s) => s.id !== id).map((s) => ({ id: s.id, applied: s.applied, note: s.note, claudeSummary: s.claudeSummary }));
+  const sessions = recent(sessionsDir, 4).filter((s) => s.id !== id).map((s) => ({ id: s.id, applied: s.applied, deep: s.deep || undefined, note: s.note, claudeSummary: s.claudeSummary }));
+  const minutes = (ms: number) => Math.round(ms / 60_000);
+  const deepSection = deep ? `
+## This is a DEEP session: find the root cause
+The game has made no real progress (no new badge, story event, Pokémon owned or map visited) for the last ${deep.stagnant} sessions, about ${minutes(deep.stagnant * deep.intervalMs)} minutes of play. The usual short sessions have been adding small patches without getting past the block, so this one has ${minutes(timeoutMs)} minutes instead of ${minutes(deep.normalMs)}. Spend them on diagnosis before touching code:
+- Re-read NOTES.md critically. Its diagnoses and "facts" may be wrong; check each one that matters against evidence before building on it.
+- Trace the live runs step by step. In run.jsonl, follow the bot's map and position around the point where progress stops and compare what it pressed with what the game did (the "fn": "game" lines). A position that stays the same while a direction is pressed means the bot's picture of the map is wrong or incomplete, not that Jev chose badly.
+- Read the harness source in /work/app/src for what the API really returns: grid() (rows, warps, blockedMoves), state() and sprites() right after a warp, and how frames and waits relate to game time.
+- Work out the real route through the current area from data, not memory: rom.maps has every warp and its destination, grid() has walls and blocked moves. Then check whether the bot's mechanics can physically follow that route, and whether it needs an interaction it has no mechanic for (talking to an object, taking an item, a scripted NPC).
+- Test for long enough to see the whole traversal: \`pokered-test --frames 60000 --seconds 900\` is about 9 minutes of game time. Start from the live state and from earlier states in /work/runs to reproduce the loop.
+- Finish with the mechanics fix that gets past the block, verified in a test that actually passes it, and write the root cause in NOTES.md so the next sessions don't relitigate it. Facts for Jev are still welcome, but a new fact will not fix a walk that hits an invisible wall.
+` : '';
   return `You are building a bot that plays Pokémon Red, and the decisions in it are made by Jev. The goal is to beat the game: become Champion. Every session should move the bot closer, judged by the game's real progress: badges, story events, Pokédex, levels, new maps, and fewer runs that get stuck or crash.
 
 ## How the bot must work: Jev decides, code carries it out
@@ -314,7 +369,7 @@ Jev is a decision model, called with jev() (see "Asking Jev" in the README). It 
 The host checks this: your final code must have been run with pokered-test, and in that test Jev must have answered at least one question. Otherwise the session is not applied.
 
 This session is session ${id}. You have about ${Math.round(timeoutMs / 60_000) - 1} minutes. At ${Math.round(timeoutMs / 60_000)} minutes the session is killed and its changes are thrown away, so leave time to finish.
-
+${deepSection}
 ## Where things are
 - /work/bots: the bot. Edit it here. The entry point is bot.js, and other .js files are helpers it imports with relative paths. When you finish, these files replace the live bot, which restarts with them. The live game carries on from wherever it is, so the bot has to cope with starting at any point in the game.
 - /work/bots/NOTES.md: notes that carry over between sessions. Nothing else is remembered. Read it first. Before you finish, update it with what you changed, what you learned, and what to try next.
