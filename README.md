@@ -43,6 +43,7 @@ npm start -- --headless                # no viewer
 - **Game timing:** while a bot runs, the game only advances when the bot presses a button or waits. When the bot finishes or crashes, the game idles in real time until the next save.
 - **New games:** before the bot starts a new game, the host opens OPTION from the title menu and sets text speed FAST and battle animations OFF, using button presses only. It then leaves the game on the title screen for the bot.
 - **Saving:** the host autosaves every 5 minutes and on Ctrl+C.
+- **Running time:** the total time the host has been running, across stops and restarts, is kept in `logs/uptime.json` (flushed every 30 seconds) and shown in the viewer and on the stream panel. Delete the file to start counting from zero.
 - **Streaming:** the host streams if `STREAM_URL` or `YOUTUBE_STREAM_KEY` is set.
 
 The included [`bots/bot.js`](bots/bot.js) presses through Oak's intro and stops in Red's bedroom.
@@ -96,8 +97,8 @@ It returns `{ map, width, height, player, rows, legend, warps, npcs, exits, bloc
 - `warps`: each door and staircase, with its coordinates and the map it leads to.
 - `npcs`: where each NPC or object is right now.
 - `exits`: the map edges that lead to other maps (north, south, west, east).
-
 - `blockedMoves`: steps the game refuses between two squares that both look walkable, as `{ x, y, dir }` (`dir` is `up`, `down`, `left` or `right`; both directions of a blocked pair are listed). These are elevation differences in caves and forests (Mt Moon, Rock Tunnel, Viridian Forest, ...). They're invisible in `rows`, so a pathfinder that ignores them walks into a wall it can't see. Treat `{ x, y, dir }` as a wall between those two squares.
+
 ## Asking Jev
 
 [Jev](https://openrouter.ai/docs/guides/community/jev) is a decision model. You send it some state and typed questions, and it returns picks with probabilities, not text. Bots call it through the host with OpenRouter's [Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request):

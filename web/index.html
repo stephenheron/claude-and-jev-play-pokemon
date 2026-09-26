@@ -76,6 +76,7 @@
         <div class="stat"><b id="money">0</b><span>money</span></div>
         <div class="stat"><b id="frames">0</b><span>frames</span></div>
         <div class="stat"><b id="state">—</b><span>state</span></div>
+        <div class="stat"><b id="uptime">—</b><span>running</span></div>
       </div>
     </div>
     <div class="card" style="margin-top:16px">
@@ -129,6 +130,12 @@ function status(s) {
   $('badges').textContent = s.badges; $('money').textContent = `¥${s.money.toLocaleString()}`;
   $('frames').textContent = s.frames.toLocaleString(); $('state').textContent = s.paused ? 'paused' : 'running';
   $('loc').textContent = `${s.map} (${s.x}, ${s.y})`;
+  if (s.uptime) {
+    // total across restarts (logs/uptime.json); hover for this start and the first start
+    const dur = (ms) => { const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d = Math.floor(h / 24); return d ? `${d}d ${h % 24}h` : h ? `${h}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`; };
+    $('uptime').textContent = dur(s.uptime.totalMs);
+    $('uptime').title = `this start: ${dur(s.uptime.thisRunMs)} · start ${s.uptime.starts} since ${new Date(s.uptime.firstStarted).toLocaleString()}`;
+  }
   if (s.bot) {
     $('bot').hidden = false;
     $('bot').textContent = `bot: ${s.bot.status}${s.bot.run ? ` · run ${s.bot.run}` : ''}`;

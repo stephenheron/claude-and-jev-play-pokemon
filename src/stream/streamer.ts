@@ -67,7 +67,7 @@ export function wrap(text: string, width: number): string[] {
  * an rtmp:// address (YouTube/Twitch) or a local file such as test.mkv. Needs ffmpeg on the PATH.
  * Default url: STREAM_URL, or YouTube when YOUTUBE_STREAM_KEY is set.
  */
-export function startStream(game: Game, url = process.env.STREAM_URL ?? (process.env.YOUTUBE_STREAM_KEY ? `rtmp://a.rtmp.youtube.com/live2/${process.env.YOUTUBE_STREAM_KEY}` : undefined)) {
+export function startStream(game: Game, url = process.env.STREAM_URL ?? (process.env.YOUTUBE_STREAM_KEY ? `rtmp://a.rtmp.youtube.com/live2/${process.env.YOUTUBE_STREAM_KEY}` : undefined), opts: { extraLines?: () => string[] } = {}) {
   if (!url) throw new Error('startStream: no url (set STREAM_URL or YOUTUBE_STREAM_KEY)');
   const streamer = new Streamer(url, game.rom.b, (m) => game.log('stream', m));
   game.emu.onAudio = (l, r) => streamer.pushAudio(l, r);
@@ -83,6 +83,7 @@ export function startStream(game: Game, url = process.env.STREAM_URL ?? (process
       lines.push(`${nm.slice(0, w).padEnd(w)} ${stats}`);
     }
     if (game.paused) lines.push('', '~ paused');
+    if (opts.extraLines) lines.push(...opts.extraLines());
     streamer.setPanel(lines);
   };
   let lastPanel = 0;

@@ -12,6 +12,7 @@ import { startBot, type BotRun } from './sandbox.js';
 import { JevClient } from './jev.js';
 import { setupOptions } from './options.js';
 import { startImprover, type ImproverStatus } from './improver.js';
+import { trackUptime, formatDuration } from './uptime.js';
 
 const args = process.argv.slice(2);
 const flag = (n: string) => args.includes(`--${n}`);
@@ -28,8 +29,13 @@ game.onEvent((e) => console.log(`[${e.kind}] ${e.msg}`));
 const bot: { status: 'waiting' | 'running' | 'finished' | 'error'; run?: string; error?: string; startedAt?: number } = { status: 'waiting' };
 const jevStatus = () => ({ available: jev.available, model: jev.model, calls: jev.calls, costUsd: +jev.usd.toFixed(4) });
 const improverStatus: ImproverStatus = { status: 'off' };
-if (!flag('headless')) serveViewer(game, { extra: () => ({ bot, jev: jevStatus(), improver: improverStatus }) });
-if (process.env.STREAM_URL || process.env.YOUTUBE_STREAM_KEY) startStream(game);
+const uptime = trackUptime(); // total running time across restarts (logs/uptime.json)
+if (!flag('headless')) serveViewer(game, { extra: () => ({ bot, jev: jevStatus(), improver: improverStatus, uptime: uptime.status() }) });
+if (process.env.STREAM_URL || process.env.YOUTUBE_STREAM_KEY) startStream(game, undefined, { extraLines: () => ['', `~ running ${formatDuration(uptime.status().totalMs)}`] });
+{
+  const u = uptime.status();
+  game.log('info', u.starts > 1 ? `running for ${formatDuration(u.totalMs)} in total (start ${u.starts} since ${u.firstStarted.slice(0, 16).replace('T', ' ')})` : 'first start: the running-time counter begins now (logs/uptime.json)');
+}
 
 const load = opt('load') ?? (!flag('fresh') && fs.existsSync(path.join(game.saveDir, `${AUTOSAVE}.state.json`)) ? AUTOSAVE : undefined);
 if (load) game.load(load);
@@ -80,6 +86,7 @@ const autosave = setInterval(() => game.save(AUTOSAVE), 5 * 60_000);
 
 function shutdown() {
   clearInterval(idle); clearInterval(autosave);
+  uptime.stop();
   improver.stop();
   current?.stop('shutdown');
   game.save(AUTOSAVE);
