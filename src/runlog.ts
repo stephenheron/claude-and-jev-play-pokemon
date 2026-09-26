@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Game } from './game.js';
+import { progress } from './progress.js';
 
-export type EndReason = 'reload' | 'finished' | 'error' | 'shutdown';
+export type EndReason = 'reload' | 'finished' | 'error' | 'shutdown' | 'limit';
 
 /**
  * Everything one bot run did, in logs/runs/<id>/:
@@ -19,6 +20,7 @@ export class RunLog {
   readonly dir: string;
   private t0 = Date.now();
   private startFrame: number;
+  private startProgress: ReturnType<typeof progress>;
   private reads = new Map<string, number>();
   private readsTotal = 0;
   private actions = 0;
@@ -32,7 +34,7 @@ export class RunLog {
   jevUsd = 0;
   ended = false;
 
-  constructor(private game: Game, files: Map<string, string>, root = 'logs/runs') {
+  constructor(private game: Game, files: Map<string, string>, root = process.env.RUNS_DIR || 'logs/runs') {
     const d = new Date(this.t0);
     const pad = (n: number) => String(n).padStart(2, '0');
     this.id = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}-${String(d.getMilliseconds()).padStart(3, '0')}`;
@@ -44,6 +46,7 @@ export class RunLog {
       fs.writeFileSync(out, src);
     }
     this.startFrame = game.frames;
+    this.startProgress = progress(game);
     game.emu.saveState(path.join(this.dir, 'start.state.json'));
     game.screenshot(path.join(this.dir, 'start.png'));
     this.maps.add(game.state.mapName);
@@ -113,6 +116,7 @@ export class RunLog {
       actions: this.actions, reads: this.readsTotal, logLines: this.logLines, screenshots: this.shots,
       jev: { calls: this.jevCalls, errors: this.jevErrors, costUsd: +this.jevUsd.toFixed(6) },
       framesAdvanced: this.game.frames - this.startFrame, mapsVisited: [...this.maps],
+      progress: { start: this.startProgress, end: progress(this.game) },
     };
     fs.writeFileSync(path.join(this.dir, 'summary.json'), JSON.stringify(summary, null, 2));
   }

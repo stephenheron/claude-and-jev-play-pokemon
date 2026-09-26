@@ -37,6 +37,20 @@
   .ev { font-size: 12px; color: var(--muted); }
   .ev.bot { color: var(--ink); }
   .ev.jev { color: var(--accent); }
+  .ev.improver { color: var(--accent); font-weight: 600; }
+  #live { max-height: 45vh; overflow-y: auto; display: grid; gap: 4px; font-size: 12px; }
+  #live .step { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; color: var(--muted); }
+  #live .step.says { font-family: inherit; font-size: 13px; color: var(--ink); }
+  #live .step.error { color: var(--warn); }
+  #sessions { max-height: 40vh; overflow-y: auto; display: grid; gap: 10px; }
+  .sess { border-top: 1px solid var(--line); padding-top: 8px; }
+  .sess:first-child { border-top: 0; padding-top: 0; }
+  .sess .head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
+  .sess .tag { font-weight: 600; }
+  .sess .tag.yes { color: var(--accent); }
+  .sess .tag.no { color: var(--warn); }
+  .sess .summary { margin: 4px 0 2px; }
+  .sess .note { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
   .ev.save { color: var(--accent); font-weight: 600; }
   .ev.error { color: var(--warn); }
 </style>
@@ -47,6 +61,7 @@
   <span class="pill" id="conn">connecting…</span>
   <span class="pill" id="bot" hidden></span>
   <span class="pill" id="jev" hidden></span>
+  <span class="pill" id="improver" hidden></span>
 </header>
 <main>
   <section>
@@ -71,6 +86,14 @@
     </div>
   </section>
   <section class="side">
+    <div class="card" id="live-card" hidden>
+      <div class="label">Claude is working <span id="live-session"></span></div>
+      <div id="live"></div>
+    </div>
+    <div class="card" id="sessions-card" hidden>
+      <div class="label">Improver sessions (latest first)</div>
+      <div id="sessions"></div>
+    </div>
     <div class="card">
       <div class="label">Events</div>
       <div id="events" style="max-height: 70vh; overflow-y: auto"></div>
@@ -117,10 +140,46 @@ function status(s) {
     $('jev').textContent = s.jev.available ? `jev: ${s.jev.calls} calls · $${s.jev.costUsd.toFixed(4)}` : 'jev: off';
     $('jev').title = s.jev.model;
   }
+  if (s.improver) {
+    const im = s.improver, el = $('improver');
+    el.hidden = false;
+    const next = im.nextAt ? ` · next ${new Date(im.nextAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
+    el.textContent = im.status === 'running' ? `improver: session ${im.session} running` : im.status === 'off' ? 'improver: off' : `improver: ${im.status}${next}`;
+    el.title = im.status === 'off' ? (im.reason ?? '') : im.last ? `last: ${im.last.id}: ${im.last.note}` : '';
+    sessions(im.history ?? []);
+  }
   $('party').innerHTML = s.party.map((p) => `<div class="mon"><div>${esc(p.name)} <span class="num">${esc(p.species)} Lv${p.level}</span></div>
     <div class="hp"><i style="width:${Math.round(100 * p.hp / Math.max(1, p.maxHp))}%"></i></div><div class="num">${p.hp}/${p.maxHp}</div></div>`).join('') || '<span class="ev">none yet</span>';
 }
+let sessionsKey = '';
+function sessions(list) {
+  const key = list.map((x) => x.id).join();
+  if (key === sessionsKey) return; // only redraw when a session is added
+  sessionsKey = key;
+  $('sessions-card').hidden = !list.length;
+  $('sessions').innerHTML = list.map((x) => {
+    const when = x.ended ? new Date(x.ended).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : x.id;
+    const cost = x.costUsd != null ? ` · $${Number(x.costUsd).toFixed(2)}` : '';
+    const mins = x.durationMs ? ` · ${Math.round(x.durationMs / 60000)} min` : '';
+    return `<div class="sess"><div class="head"><span>${esc(when)}${mins}${cost}</span><span class="tag ${x.applied ? 'yes' : 'no'}">${x.applied ? 'applied' : 'not applied'}</span></div>
+      ${x.summary ? `<div class="summary">${esc(x.summary)}</div>` : ''}<div class="note">${esc(x.note)}</div></div>`;
+  }).join('');
+}
+function live(e) {
+  const el = document.createElement('div');
+  const says = e.msg.startsWith('says: ');
+  el.className = `step${says ? ' says' : e.msg.startsWith('error: ') ? ' error' : ''}`;
+  el.textContent = says ? e.msg.slice(6) : e.msg;
+  el.title = new Date(e.t).toLocaleTimeString();
+  const box = $('live'), atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.append(el);
+  while (box.children.length > 300) box.firstChild.remove();
+  if (atBottom) box.scrollTop = box.scrollHeight; // follow along unless you've scrolled up to read
+  $('live-card').hidden = false;
+}
 function event(e) {
+  if (e.kind === 'claude') return live(e);
+  if (e.kind === 'improver' && / started$/.test(e.msg)) { $('live').innerHTML = ''; $('live-session').textContent = `(${e.msg.replace(/^session | started$/g, '')})`; $('live-card').hidden = false; }
   const el = document.createElement('div');
   el.className = `ev ${e.kind}`;
   el.textContent = `[${e.kind}] ${e.msg}`;

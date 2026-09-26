@@ -88,8 +88,13 @@ export class Game {
   }
 
   load(name: string) {
-    this.emu.loadState(`${this.saveDir}/${name}.state.json`);
-    this.log('save', `loaded ${name}`);
+    this.loadFile(`${this.saveDir}/${name}.state.json`);
+  }
+
+  /** Load a save state from any path (e.g. a run log's start.state.json). */
+  loadFile(file: string) {
+    this.emu.loadState(file);
+    this.log('save', `loaded ${file}`);
   }
 
   // --- scheduling and listeners ---------------------------------------------

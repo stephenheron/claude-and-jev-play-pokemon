@@ -41,6 +41,7 @@ npm start -- --headless                # no viewer
 - **The bot:** the host runs `bots/bot.js`. Other `.js` files in `bots/` can be helpers it imports with relative paths.
 - **Reloading:** saving any `.js` file in `bots/` stops the running bot and starts the new code. The game carries on from where it is.
 - **Game timing:** while a bot runs, the game only advances when the bot presses a button or waits. When the bot finishes or crashes, the game idles in real time until the next save.
+- **New games:** before the bot starts a new game, the host opens OPTION from the title menu and sets text speed FAST and battle animations OFF, using button presses only. It then leaves the game on the title screen for the bot.
 - **Saving:** the host autosaves every 5 minutes and on Ctrl+C.
 - **Streaming:** the host streams if `STREAM_URL` or `YOUTUBE_STREAM_KEY` is set.
 
@@ -64,6 +65,7 @@ The API is passed in as an argument, and is also available as globals. Every cal
 |---|---|
 | Input | `press(button, hold = 4, release = 8)`, `hold(button, frames)`, `wait(frames)`, `frame([buttons])`. Buttons are `A B START SELECT UP DOWN LEFT RIGHT`. Up to 600 frames per call. |
 | State | `state()` (map, x, y, facing, money, badges, inBattle, playerName, frames, ...), `party()`, `box()`, `bag()`, `battle()`, `sprites()`, `screen()` (text rows, dialog, `waitingForA`, cursor), `menu()`, `event('EVENT_…')` |
+| Map | `grid()`: the current map's walls, grass, water, ledges, doors and NPCs. See [Getting around](#getting-around). |
 | Memory | `read(symbolOrAddress, length = 1)` returns bytes (read-only). `sym(name)` returns an address. |
 | ROM data | `rom.species`, `rom.moves`, `rom.items`, `rom.maps` (warps, signs, NPCs), `rom.typeChart`, `rom.effectiveness(type, [types])`, `rom.speciesByName(name)`, `rom.mapByName(name)` |
 | Jev | `jev(state, questions)` returns `{ answers, usage }`. Needs `OPENROUTER_API_KEY` on the host. See [Asking Jev](#asking-jev). |
@@ -76,6 +78,24 @@ The API is passed in as an argument, and is also available as globals. Every cal
 - **Stuck bots:** a bot stuck in a loop doesn't block the host, and saving new code replaces it.
 - **Checked arguments:** every argument is checked. Save names can only use letters, numbers, `-` and `_`.
 - **Rate limits:** logs are limited to 20 lines a second, 500 characters each. Saves are limited to one every 2 seconds, and screenshots to 500 per run.
+
+## Getting around
+
+`grid()` describes the current map. Coordinates are the same squares as `state().x` / `state().y`, with (0, 0) at the top left.
+
+```
+PALLET_TOWN 20x18
+ ##########,,########      .  walkable            ,  tall grass (walkable)
+ #..........@.......#      #  wall or obstacle    ~  water (needs SURF)
+ #...####....####...#      T  cuttable tree       C  counter (talk across it)
+ #..##D##...##D##...#      v < > ^  ledge: jump over it that way
+ #..N...............#      D  door, stairs or warp   N  NPC or object   @  you
+```
+
+It returns `{ map, width, height, player, rows, legend, warps, npcs, exits }`:
+- `warps`: each door and staircase, with its coordinates and the map it leads to.
+- `npcs`: where each NPC or object is right now.
+- `exits`: the map edges that lead to other maps (north, south, west, east).
 
 ## Asking Jev
 

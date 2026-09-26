@@ -25,6 +25,7 @@ export function serveViewer(game: Game, opts: { port?: number; extra?: () => Rec
   const snap = () => status(game, opts.extra);
   const sockets = new Set<WebSocket>();
   const events: GameEvent[] = [];
+  let claude: GameEvent[] = []; // the current improver session's activity, kept apart so it can't crowd out other events
   const broadcast = (obj: unknown) => {
     const s = JSON.stringify(obj);
     for (const ws of sockets) if (ws.readyState === ws.OPEN) ws.send(s);
@@ -39,10 +40,12 @@ export function serveViewer(game: Game, opts: { port?: number; extra?: () => Rec
   });
 
   const wss = new WebSocketServer({ server });
+  wss.on('error', () => {}); // it re-emits the HTTP server's errors, which server.on('error') below handles
   wss.on('connection', (ws) => {
     sockets.add(ws);
-    ws.send(JSON.stringify({ type: 'history', events }));
+    ws.send(JSON.stringify({ type: 'history', events: [...events, ...claude].sort((a, b) => a.t - b.t) }));
     ws.send(JSON.stringify(snap()));
+    ws.send(Buffer.from(Uint8Array.from(game.screen()))); // the current screen now, even if the game isn't advancing
     ws.on('message', (d) => {
       let m: { cmd?: string };
       try { m = JSON.parse(String(d)); } catch { return; }
@@ -53,7 +56,11 @@ export function serveViewer(game: Game, opts: { port?: number; extra?: () => Rec
   });
 
   const offEvent = game.onEvent((e) => {
-    events.push(e); if (events.length > 300) events.shift();
+    if (e.kind === 'claude') { claude.push(e); if (claude.length > 300) claude.shift(); }
+    else {
+      if (e.kind === 'improver' && / started$/.test(e.msg)) claude = []; // a new session: start its activity afresh
+      events.push(e); if (events.length > 300) events.shift();
+    }
     broadcast({ type: 'event', e });
   });
 

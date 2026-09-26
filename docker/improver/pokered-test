@@ -1,0 +1,6 @@
+#!/bin/sh
+# Test the bot in /work/bots against the real game, headless and at max speed.
+# Starts from the live game (/work/live.state.json) unless you pass --load <state file>.
+# usage: pokered-test [--load /work/runs/<id>/end.state.json] [--frames 20000] [--seconds 120]
+cd /work/app && exec node --no-node-snapshot --import tsx src/testrun.ts "$@" \
+  --load /work/live.state.json --bots /work/bots --out /work/scratch/test-runs --saves /work/scratch/saves

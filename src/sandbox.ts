@@ -6,6 +6,7 @@ import type { Button } from './emu/emulator.js';
 import { sym } from './game/symbols.js';
 import { RunLog, type EndReason } from './runlog.js';
 import { JevError, type JevClient, type JevQuestion } from './jev.js';
+import { mapGrid } from './mapview.js';
 
 // Runs untrusted bot code in its own V8 isolate (isolated-vm): no Node APIs, capped memory, killable at any time.
 // The bot's only way out is one host function, `call(name, argsJson)`, and every argument is validated here.
@@ -14,6 +15,9 @@ const MEMORY_MB = 128;
 const MAX_FRAMES = 600;            // per wait/hold call, so one call can't stall the host for long
 const MAX_FILES = 200, MAX_BYTES = 5 * 1024 * 1024;
 const LOG_RATE = 20, LOG_BURST = 50, LOG_CHARS = 500;
+// Stuck-bot watchdog: the game only advances when the bot presses buttons or waits. A bot that keeps asking Jev,
+// or keeps reading, or goes quiet, without ever advancing the game is stuck in a loop and is stopped.
+const STALL_JEV = 20, STALL_CALLS = 20_000, STALL_SECONDS = 120;
 const BUTTONS = new Set<Button>(['A', 'B', 'START', 'SELECT', 'UP', 'DOWN', 'LEFT', 'RIGHT']);
 const NAME = /^[A-Za-z0-9_-]{1,40}$/;
 
@@ -56,7 +60,7 @@ export function snapshotBots(dir: string): Map<string, string> {
   const walk = (d: string) => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
       const p = path.join(d, e.name);
-      if (e.isDirectory()) { if (!e.name.startsWith('.')) walk(p); continue; }
+      if (e.isDirectory()) { if (!e.name.startsWith('.') && e.name !== 'node_modules') walk(p); continue; }
       if (!/\.m?js$/.test(e.name)) continue;
       const src = fs.readFileSync(p, 'utf8');
       bytes += src.length;
@@ -105,6 +109,7 @@ const api = Object.freeze({
   state: () => call('state'), party: () => call('party'), box: () => call('box'), bag: () => call('bag'),
   battle: () => call('battle'), sprites: () => call('sprites'), screen: () => call('screen'), menu: () => call('menu'),
   event: (name) => call('event', name), read: (addr, length = 1) => call('read', addr, length), sym: (name) => call('sym', name),
+  grid: () => call('grid'),
   save: (name) => call('save', name), load: (name) => call('load', name), snapshot: (label = '') => call('snapshot', label),
   jev: (state, questions) => call('jev', state, questions),
   log: (...a) => call('log', a.map(fmt).join(' ')),
@@ -135,9 +140,30 @@ export function startBot(game: Game, botsDir: string, onEnd: (reason: EndReason,
   let alive = true;
   let tokens = LOG_BURST, lastRefill = Date.now(), dropped = 0, lastSave = 0;
 
+  // watchdog state: calls made (and Jev calls among them) since the game last advanced
+  let stallFrame = game.frames, stallSince = Date.now(), stallCalls = 0, stallJev = 0;
+  const stuck = (why: string) => {
+    const msg = `stuck: ${why} without advancing the game (the game only moves when the bot presses a button or waits)`;
+    setImmediate(() => finish('error', msg)); // stop after this call returns, so the isolate isn't disposed mid-call
+    return new BotError(msg);
+  };
+  const noteCall = (isJev: boolean) => {
+    if (game.frames !== stallFrame || game.paused) { stallFrame = game.frames; stallSince = Date.now(); stallCalls = 0; stallJev = 0; }
+    stallCalls++;
+    if (isJev) stallJev++;
+    if (stallJev > STALL_JEV) throw stuck(`asked Jev ${stallJev} times`);
+    if (stallCalls > STALL_CALLS) throw stuck(`made ${stallCalls} calls`);
+  };
+  // also catches a bot spinning in plain JavaScript without calling anything
+  const stallTimer = setInterval(() => {
+    if (game.frames !== stallFrame || game.paused) { stallFrame = game.frames; stallSince = Date.now(); stallCalls = 0; stallJev = 0; return; }
+    if (Date.now() - stallSince > STALL_SECONDS * 1000) finish('error', `stuck: ${STALL_SECONDS} seconds without advancing the game (the game only moves when the bot presses a button or waits)`);
+  }, 5000);
+
   const finish = (reason: EndReason, error?: string) => {
     if (!alive) return;
     alive = false;
+    clearInterval(stallTimer);
     if (!isolate.isDisposed) isolate.dispose();
     log.end(reason, { error, droppedLogLines: dropped || undefined });
     onEnd(reason, error);
@@ -185,6 +211,9 @@ export function startBot(game: Game, botsDir: string, onEnd: (reason: EndReason,
       if (typeof name !== 'string') throw new BotError('sym() takes a symbol name like wPartyMons');
       try { return sym(name); } catch (e) { throw new BotError((e as Error).message); }
     },
+    grid: () => {
+      try { return mapGrid(game); } catch (e) { throw new BotError(`grid(): no map loaded yet (${(e as Error).message})`); }
+    },
     read: (addr, len) => {
       let a: number;
       if (typeof addr === 'string') { try { a = sym(addr); } catch (e) { throw new BotError((e as Error).message); } }
@@ -197,6 +226,7 @@ export function startBot(game: Game, botsDir: string, onEnd: (reason: EndReason,
 
   const host = async (name: string, argsJson: string): Promise<string | undefined> => {
     if (!alive) throw new Error('bot stopped');
+    noteCall(name === 'jev');
     let args: unknown[];
     try { args = JSON.parse(argsJson); } catch { throw new BotError('bad arguments'); }
     if (!Array.isArray(args)) throw new BotError('bad arguments');

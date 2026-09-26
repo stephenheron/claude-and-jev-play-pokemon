@@ -1,6 +1,7 @@
 // The bot host: runs the game, viewer and stream, and runs bots/bot.js in a sandbox.
 // Saving any .js file in bots/ restarts the bot with the new code; the game carries on where it is.
-// usage: npm start [-- --speed 1] [--load <save>] [--fresh] [--headless]
+// On start-up and every few minutes, a Claude Code session in Docker works on improving the bot (src/improver.ts).
+// usage: npm start [-- --speed 1] [--load <save>] [--fresh] [--headless] [--no-improver]
 import './env.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,6 +10,8 @@ import { serveViewer } from './viewer.js';
 import { startStream } from './stream/streamer.js';
 import { startBot, type BotRun } from './sandbox.js';
 import { JevClient } from './jev.js';
+import { setupOptions } from './options.js';
+import { startImprover, type ImproverStatus } from './improver.js';
 
 const args = process.argv.slice(2);
 const flag = (n: string) => args.includes(`--${n}`);
@@ -24,11 +27,14 @@ game.onEvent((e) => console.log(`[${e.kind}] ${e.msg}`));
 
 const bot: { status: 'waiting' | 'running' | 'finished' | 'error'; run?: string; error?: string; startedAt?: number } = { status: 'waiting' };
 const jevStatus = () => ({ available: jev.available, model: jev.model, calls: jev.calls, costUsd: +jev.usd.toFixed(4) });
-if (!flag('headless')) serveViewer(game, { extra: () => ({ bot, jev: jevStatus() }) });
+const improverStatus: ImproverStatus = { status: 'off' };
+if (!flag('headless')) serveViewer(game, { extra: () => ({ bot, jev: jevStatus(), improver: improverStatus }) });
 if (process.env.STREAM_URL || process.env.YOUTUBE_STREAM_KEY) startStream(game);
 
 const load = opt('load') ?? (!flag('fresh') && fs.existsSync(path.join(game.saveDir, `${AUTOSAVE}.state.json`)) ? AUTOSAVE : undefined);
 if (load) game.load(load);
+// a new game: set text speed FAST and battle animations OFF from the title menu before the bot starts (house rules)
+else if (!setupOptions(game)) game.log('info', 'could not set the options; playing with the defaults');
 
 let current: BotRun | null = null;
 
@@ -74,12 +80,17 @@ const autosave = setInterval(() => game.save(AUTOSAVE), 5 * 60_000);
 
 function shutdown() {
   clearInterval(idle); clearInterval(autosave);
+  improver.stop();
   current?.stop('shutdown');
   game.save(AUTOSAVE);
-  process.exit(0);
+  // let the bot's isolate finish disposing first: exiting in the same tick hangs isolated-vm when a bot was mid-call
+  setTimeout(() => process.exit(0), 100);
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
 game.log('jev', jev.available ? `Jev: ${jev.model} via OpenRouter` : 'Jev: off (set OPENROUTER_API_KEY to let bots call it)');
 start();
+const improver = flag('no-improver') || process.env.IMPROVER === 'off'
+  ? (game.log('improver', 'off (--no-improver)'), { stop() {} })
+  : startImprover(game, BOTS_DIR, improverStatus);
