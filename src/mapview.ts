@@ -31,6 +31,17 @@ export function mapGrid(game: Game) {
       if (cells[y + dy]?.[x + dx] !== undefined) cells[y + dy][x + dx] = LEDGE_CHAR[d];
     }
   }
+  // Moves the game refuses between two squares that are both walkable: elevation differences in caves and forests
+  // (the tileset's "tile pair collisions"). Invisible in `rows`, so pathfinding has to treat them as walls;
+  // a bot that ignores them walks into the same spot until it gives up (Mt Moon 1F alone has 131 of them).
+  const blockedMoves: { x: number; y: number; dir: Dir }[] = [];
+  for (let y = 0; y < g.h; y++) for (let x = 0; x < g.w; x++) {
+    if (!g.walkable(x, y)) continue;
+    for (const d of Object.keys(DIRS) as Dir[]) {
+      const [dx, dy] = DIRS[d];
+      if (g.walkable(x + dx, y + dy) && g.pairBlocked(g.tile(x, y), g.tile(x + dx, y + dy))) blockedMoves.push({ x, y, dir: d });
+    }
+  }
   const md = game.rom.maps.get(gs.mapId);
   const warps = (md?.warps ?? []).map((w) => ({ x: w.x, y: w.y, to: game.rom.maps.get(w.destMap)?.name ?? (w.destMap === 0xff ? 'the previous map' : `map ${w.destMap}`) }));
   const npcs = gs.sprites().filter((s) => !s.hidden).map((s) => ({ index: s.index, x: s.x, y: s.y }));
@@ -44,5 +55,6 @@ export function mapGrid(game: Game) {
     legend: LEGEND,
     warps, npcs,
     exits: (md?.connections ?? []).map((c) => ({ side: c.dir, to: game.rom.maps.get(c.map)?.name ?? `map ${c.map}` })),
+    blockedMoves,
   };
 }

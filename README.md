@@ -65,7 +65,7 @@ The API is passed in as an argument, and is also available as globals. Every cal
 |---|---|
 | Input | `press(button, hold = 4, release = 8)`, `hold(button, frames)`, `wait(frames)`, `frame([buttons])`. Buttons are `A B START SELECT UP DOWN LEFT RIGHT`. Up to 600 frames per call. |
 | State | `state()` (map, x, y, facing, money, badges, inBattle, playerName, frames, ...), `party()`, `box()`, `bag()`, `battle()`, `sprites()`, `screen()` (text rows, dialog, `waitingForA`, cursor), `menu()`, `event('EVENT_…')` |
-| Map | `grid()`: the current map's walls, grass, water, ledges, doors and NPCs. See [Getting around](#getting-around). |
+| Map | `grid()`: the current map's walls, grass, water, ledges, doors, NPCs and blocked moves (elevation). See [Getting around](#getting-around). |
 | Memory | `read(symbolOrAddress, length = 1)` returns bytes (read-only). `sym(name)` returns an address. |
 | ROM data | `rom.species`, `rom.moves`, `rom.items`, `rom.maps` (warps, signs, NPCs), `rom.typeChart`, `rom.effectiveness(type, [types])`, `rom.speciesByName(name)`, `rom.mapByName(name)` |
 | Jev | `jev(state, questions)` returns `{ answers, usage }`. Needs `OPENROUTER_API_KEY` on the host. See [Asking Jev](#asking-jev). |
@@ -92,11 +92,12 @@ PALLET_TOWN 20x18
  #..N...............#      D  door, stairs or warp   N  NPC or object   @  you
 ```
 
-It returns `{ map, width, height, player, rows, legend, warps, npcs, exits }`:
+It returns `{ map, width, height, player, rows, legend, warps, npcs, exits, blockedMoves }`:
 - `warps`: each door and staircase, with its coordinates and the map it leads to.
 - `npcs`: where each NPC or object is right now.
 - `exits`: the map edges that lead to other maps (north, south, west, east).
 
+- `blockedMoves`: steps the game refuses between two squares that both look walkable, as `{ x, y, dir }` (`dir` is `up`, `down`, `left` or `right`; both directions of a blocked pair are listed). These are elevation differences in caves and forests (Mt Moon, Rock Tunnel, Viridian Forest, ...). They're invisible in `rows`, so a pathfinder that ignores them walks into a wall it can't see. Treat `{ x, y, dir }` as a wall between those two squares.
 ## Asking Jev
 
 [Jev](https://openrouter.ai/docs/guides/community/jev) is a decision model. You send it some state and typed questions, and it returns picks with probabilities, not text. Bots call it through the host with OpenRouter's [Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request):

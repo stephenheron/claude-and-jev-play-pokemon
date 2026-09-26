@@ -28,6 +28,8 @@ function advanceText(s) {
 function bfs(g, tx, ty, adjacentOk, ignoreNpcs) {
   const rows = g.rows, W = g.width, H = g.height;
   const blocked = new Set(ignoreNpcs ? [] : (g.npcs || []).map(n => `${n.x},${n.y}`));
+  // grid().blockedMoves: steps the game refuses between two walkable squares (cave/forest elevation). Invisible in rows.
+  const noGo = new Set((g.blockedMoves || []).map(b => `${b.x},${b.y},${String(b.dir).toUpperCase()}`));
   const sx = g.player.x, sy = g.player.y;
   const prev = new Map([[`${sx},${sy}`, null]]);
   const q = [[sx, sy]];
@@ -42,6 +44,7 @@ function bfs(g, tx, ty, adjacentOk, ignoreNpcs) {
     for (const [d, [dx, dy]] of Object.entries(DIRS)) {
       const nx = x + dx, ny = y + dy, k = `${nx},${ny}`;
       if (nx < 0 || ny < 0 || nx >= W || ny >= H || prev.has(k)) continue;
+      if (noGo.has(`${x},${y},${d}`)) continue;
       const c = rows[ny][nx];
       // ledge: one hop in its direction lands two tiles on (one-way); was treated as a wall, so ROUTE_4 east looked unreachable
       const LEDGE = { v: 'DOWN', '<': 'LEFT', '>': 'RIGHT', '^': 'UP' };
