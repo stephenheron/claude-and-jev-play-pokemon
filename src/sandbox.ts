@@ -7,6 +7,7 @@ import { sym } from './game/symbols.js';
 import { RunLog, type EndReason } from './runlog.js';
 import { JevError, type JevClient, type JevQuestion } from './jev.js';
 import { mapGrid } from './mapview.js';
+import { watchGame } from './gamewatch.js';
 
 // Runs untrusted bot code in its own V8 isolate (isolated-vm): no Node APIs, capped memory, killable at any time.
 // The bot's only way out is one host function, `call(name, argsJson)`, and every argument is validated here.
@@ -136,6 +137,7 @@ export function startBot(game: Game, botsDir: string, onEnd: (reason: EndReason,
   const files = snapshotBots(botsDir);
   if (!files.has('bot.js')) throw new Error(`no ${path.join(botsDir, 'bot.js')}`);
   const log = new RunLog(game, files);
+  const stopWatch = watchGame(game, (what, data) => log.gameEvent(what, data)); // what the game really did, for checking the bot
   const isolate = new ivm.Isolate({ memoryLimit: MEMORY_MB });
   let alive = true;
   let tokens = LOG_BURST, lastRefill = Date.now(), dropped = 0, lastSave = 0;
@@ -164,6 +166,7 @@ export function startBot(game: Game, botsDir: string, onEnd: (reason: EndReason,
     if (!alive) return;
     alive = false;
     clearInterval(stallTimer);
+    stopWatch();
     if (!isolate.isDisposed) isolate.dispose();
     log.end(reason, { error, droppedLogLines: dropped || undefined });
     onEnd(reason, error);

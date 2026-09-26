@@ -8,7 +8,8 @@ export type EndReason = 'reload' | 'finished' | 'error' | 'shutdown' | 'limit';
 /**
  * Everything one bot run did, in logs/runs/<id>/:
  *   run.jsonl     one line per action (press/hold/wait/frame/save/load/snapshot/log), with the frame, map and
- *                 position after it and a count of the reads (state/screen/...) the bot made since the last action
+ *                 position after it and a count of the reads (state/screen/...) the bot made since the last action;
+ *                 plus fn 'game' lines for what the game itself did (text shown, moves used, battles, map changes)
  *   code/         the bot files exactly as they were when the run started (the code that actually ran)
  *   start.*, end.*  save state + screenshot at both ends (start state + code = a replayable run)
  *   jev.jsonl     every Jev call in full: the state and questions sent, the answers, cost and time taken
@@ -71,6 +72,9 @@ export class RunLog {
   }
 
   log(msg: string) { this.logLines++; this.write({ fn: 'log', msg }); }
+
+  /** Something the game itself did, seen by the host (see gamewatch.ts): text, a move used, a battle, a map change. */
+  gameEvent(what: string, data: Record<string, unknown>) { this.write({ fn: 'game', what, ...data }); }
 
   /** A Jev call: the answers (plus cost and time) in run.jsonl, the full request and response in jev.jsonl. */
   jev(req: { state: unknown; questions: Record<string, unknown> }, ms: number, res?: { answers: Record<string, unknown>; usage?: { cost?: number; input_tokens?: number }; model?: string; id?: string }, error?: string) {

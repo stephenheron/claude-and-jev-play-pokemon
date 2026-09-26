@@ -136,7 +136,7 @@ Each code refresh gets its own folder, `logs/runs/<date>-<time>/`:
 
 | File | What |
 |---|---|
-| `run.jsonl` | One line per action (`press`, `hold`, `wait`, `frame`, `save`, `load`, `snapshot`, `log`), with the time, frame, map and position afterwards. Each action also counts the reads (`screen`, `state`, ...) made since the one before. The first line is `start` and the last is `end`. |
+| `run.jsonl` | One line per action (`press`, `hold`, `wait`, `frame`, `save`, `load`, `snapshot`, `log`), with the time, frame, map and position afterwards. Each action also counts the reads (`screen`, `state`, ...) made since the one before. The first line is `start` and the last is `end`. Lines with `"fn": "game"` are **what the game itself did**, recorded by the host rather than reported by the bot: `text` (each finished text box, like "SQUIRTLE used BUBBLE!"), `move` (the move actually used, from its PP going down), `battle-start`, `enemy` (each opponent as it appears), `battle-end` (with `won`, `lost`, `caught` or `ran`) and `map` (each map change). Use them to check what the bot says it did. |
 | `code/` | The bot files exactly as they were when the run started |
 | `start.state.json`, `start.png` | The game when the run started. Load it, run `code/` again, and the run replays. |
 | `end.state.json`, `end.png` | The game when the run ended |

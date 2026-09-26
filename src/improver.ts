@@ -319,7 +319,7 @@ This session is session ${id}. You have about ${Math.round(timeoutMs / 60_000) -
 - /work/bots: the bot. Edit it here. The entry point is bot.js, and other .js files are helpers it imports with relative paths. When you finish, these files replace the live bot, which restarts with them. The live game carries on from wherever it is, so the bot has to cope with starting at any point in the game.
 - /work/bots/NOTES.md: notes that carry over between sessions. Nothing else is remembered. Read it first. Before you finish, update it with what you changed, what you learned, and what to try next.
 - /work/app/README.md: the full bot API. Read "Writing a bot", "Getting around" and "Asking Jev". /work/app/src has the harness source, read-only.
-- /work/runs/<id>/: logs of the live bot's recent runs, newest last. Each has summary.json (why it ended, and progress at start and end), run.jsonl (every action), jev.jsonl, start.png/end.png, shots/ and code/ (the code that ran).
+- /work/runs/<id>/: logs of the live bot's recent runs, newest last. Each has summary.json (why it ended, and progress at start and end), run.jsonl (every action, plus "fn": "game" lines for what the game itself did: text shown, moves actually used, battles and their results, map changes), jev.jsonl, start.png/end.png, shots/ and code/ (the code that ran).
 - /work/live.state.json: the live game as it was when this session started.
 
 ## Testing
