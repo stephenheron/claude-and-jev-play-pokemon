@@ -13,6 +13,8 @@ import { JevClient } from './jev.js';
 import { setupOptions } from './options.js';
 import { startImprover, type ImproverStatus } from './improver.js';
 import { trackUptime, formatDuration } from './uptime.js';
+import { freshStart } from './fresh.js';
+import { watchChampion } from './champion.js';
 
 const args = process.argv.slice(2);
 const flag = (n: string) => args.includes(`--${n}`);
@@ -25,6 +27,13 @@ fs.mkdirSync(BOTS_DIR, { recursive: true });
 const jev = new JevClient();
 const game = new Game({ speed: +(opt('speed', process.env.SPEED ?? '1')!) });
 game.onEvent((e) => console.log(`[${e.kind}] ${e.msg}`));
+
+// --fresh: a clean slate. The old game's run logs, improver sessions, bot, notes, saves and running time are
+// moved to logs/old-<stamp>/ (nothing is deleted) and the starter bot is put back, before anything reads them.
+if (flag('fresh')) {
+  const r = freshStart({ botsDir: BOTS_DIR, saveDir: game.saveDir, logsDir: path.resolve('logs'), starterDir: path.resolve('scripts/starter-bot') });
+  game.log('info', r.moved.length ? `fresh start: moved ${r.moved.join(', ')} to ${path.relative('.', r.archive)} and restored the starter bot` : 'fresh start: nothing to archive; starter bot in place');
+}
 
 const bot: { status: 'waiting' | 'running' | 'finished' | 'error'; run?: string; error?: string; startedAt?: number } = { status: 'waiting' };
 const jevStatus = () => ({ available: jev.available, model: jev.model, calls: jev.calls, costUsd: +jev.usd.toFixed(4) });
@@ -83,9 +92,10 @@ const idle = setInterval(() => {
 }, 16);
 
 const autosave = setInterval(() => game.save(AUTOSAVE), 5 * 60_000);
+const champion = watchChampion(game); // writes logs/champion.json once the Champion is beaten; the improver then stops
 
 function shutdown() {
-  clearInterval(idle); clearInterval(autosave);
+  clearInterval(idle); clearInterval(autosave); champion.stop();
   uptime.stop();
   improver.stop();
   current?.stop('shutdown');

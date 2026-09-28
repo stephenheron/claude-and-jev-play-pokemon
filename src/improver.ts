@@ -5,6 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import type { Game } from './game.js';
 import { progress } from './progress.js';
 import { startJevRelay } from './jevrelay.js';
+import { championBeaten, CHAMPION_FILE } from './champion.js';
 
 // The bot improver: on start-up and every few minutes, a Claude Code session in a Docker container
 // reads the recent run logs, edits a copy of bots/, tests it against the game, and hands it back.
@@ -55,15 +56,29 @@ function mapsEverVisited(runsDir: string, currentMap: string): Set<string> {
   return maps;
 }
 
-/** How many sessions in a row (newest first, stopping at the last deep session) started with this same progress. */
-export function stagnantSessions(sessionsDir: string, signature: string): number {
-  let n = 0;
-  for (const s of recent(sessionsDir, 100).reverse()) {
-    if (s.deep) break;                          // a deep session resets the count, whatever it achieved
-    if (s.signature !== signature) break;       // progress was made (or an older session without a signature)
-    n++;
-  }
-  return n;
+/** The numbers in a progress signature, or null for an older session without one. */
+const signatureParts = (sig: unknown) => {
+  const m = typeof sig === 'string' && sig.match(/^badges=(\d+) events=(\d+) owned=(\d+) maps=(\d+)$/);
+  return m ? m.slice(1).map(Number) : null;
+};
+
+/**
+ * How many sessions in a row have started without beating the best progress ever seen, and when the first of them
+ * started. Progress means any signature number above its best so far, not just a change: a loop that loses the same
+ * fight (the Elite Four resets its flags on a loss, so story events go 252, 254, 256, 252, ...) is a stall.
+ * Deep sessions count too, so once the game stalls every session is deep until it gets further than ever before.
+ */
+export function stagnantSessions(sessionsDir: string, signature: string): { count: number; since?: number } {
+  const now = signatureParts(signature);
+  if (!now) return { count: 0 };
+  const best = now.map(() => -1);
+  const beatsBest = (v: number[]) => { let up = false; v.forEach((x, i) => { if (x > best[i]) { best[i] = x; up = true; } }); return up; };
+  let last = -1;                                // index of the last session that started further than all before it
+  const sessions = recent(sessionsDir, 200).map((s) => ({ parts: signatureParts(s.signature), started: Date.parse(s.started) }));
+  sessions.forEach((s, i) => { if (s.parts && beatsBest(s.parts)) last = i; });
+  if (last < 0 || beatsBest(now)) return { count: 0 };   // no history yet, or this session starts at a new best
+  const since = sessions[last].started;
+  return { count: sessions.slice(last).filter((s) => s.parts).length, since: Number.isFinite(since) ? since : undefined };
 }
 
 const env = (n: string, d: number) => { const v = Number(process.env[n]); return Number.isFinite(v) && v > 0 ? v : d; };
@@ -71,8 +86,9 @@ const env = (n: string, d: number) => { const v = Number(process.env[n]); return
 export function startImprover(game: Game, botsDir: string, status: ImproverStatus) {
   const intervalMs = env('IMPROVER_INTERVAL_MIN', 5) * 60_000;
   const timeoutMs = env('IMPROVER_TIMEOUT_MIN', 10) * 60_000;
-  // After this many sessions without game progress, the next session is a deep one: a longer, root-cause session.
-  const stallSessions = env('IMPROVER_STALL_SESSIONS', 4);
+  // After this many sessions without game progress, every session is a deep one (a longer, root-cause session)
+  // until the progress signature changes.
+  const stallSessions = env('IMPROVER_STALL_SESSIONS', 3);
   const deepTimeoutMs = env('IMPROVER_DEEP_TIMEOUT_MIN', 30) * 60_000;
   const root = path.resolve('.');
   const sessionsDir = path.join(root, 'logs', 'sessions');
@@ -110,6 +126,12 @@ export function startImprover(game: Game, botsDir: string, status: ImproverStatu
 
   async function session() {
     if (running) { game.log('improver', `skipped: session ${running.id} is still running`); return; }
+    if (championBeaten()) {
+      clearInterval(timer);
+      Object.assign(status, { status: 'off', reason: `the Champion is beaten (${CHAMPION_FILE})` });
+      game.log('improver', `off: ${status.reason}`);
+      return;
+    }
     const id = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
     const dir = path.join(sessionsDir, id);
     const container = `pokered-improver-${id}`;
@@ -121,7 +143,8 @@ export function startImprover(game: Game, botsDir: string, status: ImproverStatu
     // sessions aren't working, so this one gets more time and is told to look for the root cause.
     const now = progress(game);
     const signature = progressSignature(now, mapsEverVisited(runsDir, now.map).size);
-    const stagnant = stagnantSessions(sessionsDir, signature);
+    const { count: stagnant, since } = stagnantSessions(sessionsDir, signature);
+    const stalledMs = since ? t0 - since : stagnant * intervalMs;
     const deep = stagnant >= stallSessions;
     const limitMs = deep ? deepTimeoutMs : timeoutMs;
     Object.assign(result, { signature, stagnantSessions: stagnant, deep });
@@ -134,7 +157,7 @@ export function startImprover(game: Game, botsDir: string, status: ImproverStatu
       copyDir(botsDir, path.join(dir, 'before'));
       copyDir(botsDir, path.join(dir, 'workspace', 'bots'));
       game.emu.saveState(path.join(dir, 'live.state.json'));
-      const prompt = buildPrompt(game, runsDir, sessionsDir, id, limitMs, deep ? { stagnant, normalMs: timeoutMs, intervalMs } : undefined);
+      const prompt = buildPrompt(game, runsDir, sessionsDir, id, limitMs, deep ? { stagnant, stalledMs, normalMs: timeoutMs } : undefined);
       fs.writeFileSync(path.join(dir, 'prompt.md'), prompt);
 
       const mounts = [
@@ -153,6 +176,8 @@ export function startImprover(game: Game, botsDir: string, status: ImproverStatu
         image,
         'claude', '-p', prompt, '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions',
         '--model', process.env.IMPROVER_MODEL || 'claude-opus-5-5',
+        // deep sessions think harder: they exist because the quick patches didn't find the cause
+        ...(deep ? ['--effort', process.env.IMPROVER_DEEP_EFFORT || 'high'] : []),
       ];
       const transcript = fs.createWriteStream(path.join(dir, 'transcript.jsonl'));
       const stderr = fs.createWriteStream(path.join(dir, 'stderr.log'));
@@ -338,7 +363,7 @@ function recent(dir: string, n: number) {
     .filter(Boolean);
 }
 
-function buildPrompt(game: Game, runsDir: string, sessionsDir: string, id: string, timeoutMs: number, deep?: { stagnant: number; normalMs: number; intervalMs: number }) {
+function buildPrompt(game: Game, runsDir: string, sessionsDir: string, id: string, timeoutMs: number, deep?: { stagnant: number; stalledMs: number; normalMs: number }) {
   const runs = recent(runsDir, 8).map((r) => ({
     id: r.id, reason: r.reason, error: r.error?.split('\n')[0], durationMs: r.durationMs, actions: r.actions, jevCalls: r.jev?.calls,
     start: r.progress?.start, end: r.progress?.end,
@@ -347,13 +372,22 @@ function buildPrompt(game: Game, runsDir: string, sessionsDir: string, id: strin
   const minutes = (ms: number) => Math.round(ms / 60_000);
   const deepSection = deep ? `
 ## This is a DEEP session: find the root cause
-The game has made no real progress (no new badge, story event, Pokémon owned or map visited) for the last ${deep.stagnant} sessions, about ${minutes(deep.stagnant * deep.intervalMs)} minutes of play. The usual short sessions have been adding small patches without getting past the block, so this one has ${minutes(timeoutMs)} minutes instead of ${minutes(deep.normalMs)}. Spend them on diagnosis before touching code:
+The game has made no real progress (no new badge, story event, Pokémon owned or map visited beyond the best so far; going round the same loop doesn't count) for the last ${deep.stagnant} sessions, about ${minutes(deep.stalledMs)} minutes of play. The usual short sessions have been adding small patches without getting past the block, so this one has ${minutes(timeoutMs)} minutes instead of ${minutes(deep.normalMs)}. Spend them on diagnosis before touching code:
 - Re-read NOTES.md critically. Its diagnoses and "facts" may be wrong; check each one that matters against evidence before building on it.
 - Trace the live runs step by step. In run.jsonl, follow the bot's map and position around the point where progress stops and compare what it pressed with what the game did (the "fn": "game" lines). A position that stays the same while a direction is pressed means the bot's picture of the map is wrong or incomplete, not that Jev chose badly.
 - Read the harness source in /work/app/src for what the API really returns: grid() (rows, warps, blockedMoves), state() and sprites() right after a warp, and how frames and waits relate to game time.
 - Work out the real route through the current area from data, not memory: rom.maps has every warp and its destination, grid() has walls and blocked moves. Then check whether the bot's mechanics can physically follow that route, and whether it needs an interaction it has no mechanic for (talking to an object, taking an item, a scripted NPC).
 - Test for long enough to see the whole traversal: \`pokered-test --frames 60000 --seconds 900\` is about 9 minutes of game time. Start from the live state and from earlier states in /work/runs to reproduce the loop.
 - Finish with the mechanics fix that gets past the block, verified in a test that actually passes it, and write the root cause in NOTES.md so the next sessions don't relitigate it. Facts for Jev are still welcome, but a new fact will not fix a walk that hits an invisible wall.
+
+### Keep going until the fix is confirmed
+You have the whole ${minutes(timeoutMs)} minutes: use them. Finishing early with a guess hands the problem back to the short sessions that already failed at it.
+- Think hard before each step: form a hypothesis, decide what evidence would prove or disprove it, then get that evidence. "Probably" or "I think" in your conclusion means you are not done yet.
+- A cause is confirmed only when you have seen it in the logs or in a test: the exact frames, positions, screen text or API values that show it happening.
+- A fix is confirmed only when a pokered-test run from the live state (or a saved state at the block) actually gets past the block: a new map, floor, story event or badge that the live runs never reached. "No crash" and "Jev answered questions" are not confirmation. Read the test's run.jsonl and check what the game did.
+- If the test doesn't get past the block, that is new evidence, not the end: go back to diagnosis with what it showed and try again.
+- If a tool gets in the way (log lines cut off, a map dump too big to read, a slow test), work around it: log smaller pieces, write the data to /work/scratch and read it from there, load an earlier state closer to the block.
+- Only stop early once the fix is confirmed. If time is running out without one (leave about 3 minutes), keep the best tested change and write in NOTES.md exactly what you confirmed, what you ruled out, and what is still a guess, labelled as such.
 ` : '';
   return `You are building a bot that plays Pokémon Red, and the decisions in it are made by Jev. The goal is to beat the game: become Champion. Every session should move the bot closer, judged by the game's real progress: badges, story events, Pokédex, levels, new maps, and fewer runs that get stuck or crash.
 
@@ -390,6 +424,7 @@ Always test before you finish. A change that hasn't been tested isn't done. The 
 - The bot must not crash. Catch errors and keep playing, because a crash stops the live game until the next session.
 - If jev() throws (a bad request or a network error), fall back to a safe default for that decision and keep playing.
 - Make one focused, evidence-based improvement per session, rather than a rewrite. Early sessions should build the decision system itself: a reusable way to ask Jev with options and facts, used for the next thing the game needs.
+- Don't keep putting the same thing off. If NOTES.md has listed the same next step for 3 or more sessions without anyone doing it, that step is this session's improvement, unless the live bot is frozen or crashing right now. Getting it done beats another small patch to whatever looks most urgent.
 
 ## The live game right now
 ${JSON.stringify(progress(game), null, 2)}

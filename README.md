@@ -32,7 +32,7 @@ The ROM must be the US/EU release, with SHA-1 `ea9bcae617fdf159b045185467ae58b2e
 
 ```bash
 npm start                              # viewer at http://localhost:8787, real time, resumes the autosave
-npm start -- --fresh                   # boot a new game instead of resuming
+npm start -- --fresh                   # clean slate: new game, logs/sessions/saves archived, starter bot restored
 npm start -- --load <save>             # start from saves/<save>.state.json
 npm start -- --speed 0                 # as fast as possible (--speed 2 = double speed)
 npm start -- --headless                # no viewer
@@ -41,12 +41,13 @@ npm start -- --headless                # no viewer
 - **The bot:** the host runs `bots/bot.js`. Other `.js` files in `bots/` can be helpers it imports with relative paths.
 - **Reloading:** saving any `.js` file in `bots/` stops the running bot and starts the new code. The game carries on from where it is.
 - **Game timing:** while a bot runs, the game only advances when the bot presses a button or waits. When the bot finishes or crashes, the game idles in real time until the next save.
+- **Fresh start:** `--fresh` resets everything, not just the game. The run logs, improver sessions, `bots/` (the bot and its `NOTES.md`), save states and the running-time counter are moved to `logs/old-<timestamp>/`, nothing is deleted, and the starter bot from `scripts/starter-bot/` is put back in `bots/`. To keep your own bot, copy it back from the archive.
 - **New games:** before the bot starts a new game, the host opens OPTION from the title menu and sets text speed FAST and battle animations OFF, using button presses only. It then leaves the game on the title screen for the bot.
 - **Saving:** the host autosaves every 5 minutes and on Ctrl+C.
 - **Running time:** the total time the host has been running, across stops and restarts, is kept in `logs/uptime.json` (flushed every 30 seconds) and shown in the viewer and on the stream panel. Delete the file to start counting from zero.
 - **Streaming:** the host streams if `STREAM_URL` or `YOUTUBE_STREAM_KEY` is set.
 
-The included [`bots/bot.js`](bots/bot.js) presses through Oak's intro and stops in Red's bedroom.
+The starter bot in [`scripts/starter-bot/`](scripts/starter-bot/) (what `bots/` holds after a fresh start) presses through Oak's intro and stops in Red's bedroom.
 
 ## Writing a bot
 
